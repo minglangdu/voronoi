@@ -5,7 +5,7 @@ import os
 from queue import PriorityQueue
 import math
 
-POINT_AMOUNT = 10
+POINT_AMOUNT = 20
 POINT_SIZE = 5
 POINT_DIST = 3
 SCREEN_SIZE = 600
@@ -27,6 +27,7 @@ for i in range(POINT_AMOUNT):
     canv.create_oval(point[0], point[1], point[0] + POINT_SIZE, point[1] + POINT_SIZE, fill="black")
     eoi.put((point[1], point, True)) # (y, (x, y), isFoci)
     points.append(point)
+eoi.put((SCREEN_SIZE, (0, SCREEN_SIZE), True))
 
 class Arc:
     def __init__(self, x, y):
