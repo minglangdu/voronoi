@@ -12,6 +12,8 @@ However, for different types of distances such as Manhattan distance, a parabola
 ## Finding Circle Events
 
 "Circle Events" are events where the directrix has moved down enough such that three arcs have intersected and are now fixed in position. They are called this because the point of intersection is, by definition, the point equidistant from the foci of each arc. Thus, it can be said that the arcs are on the circumference of a circle centered at the intersection point. 
+The way to find where the directrix is is simple: since it is the same distance from the intersection point as all of the foci, we simply have to move it down by the distance between a focus and the intersection point. We can thus add the circle event to the event queue. Finally, we remove the edges that intersected and create a new edge that is perpendicular to the line between the two foci whose edges intersected. 
+However, circle events can also be invalidated by the creation of additional parabolas that intersect with the same other two objects but more recently. 
 
 ## Credits
 
