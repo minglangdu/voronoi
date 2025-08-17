@@ -7,7 +7,7 @@ An additional line called the beach line was used to generate the actual lines f
 
 As, by definition, a point on the parabola is of equal distance to the directrix and focus, we can find where distances are equal by drawing multiple parabola with a shared directrix – the sweep line. This will mean that any intersection points are the boundaries of each point's area. 
 
-However, for different types of distances such as Manhattan distance, a parabola does not work and instead it is a shape like this: ![alt text](image.png). Still, the same mechanics hold and it is possible to create an (argubly cooler-looking) Voronoi diagram with the Manhattan distance. 
+However, for different types of distances such as Manhattan distance, a parabola does not work and instead it's a different shape (see `mhparabola.png`). Still, the same mechanics hold and it is possible to create an (argubly cooler-looking) Voronoi diagram with the Manhattan distance. 
 
 ## Finding Circle Events
 
