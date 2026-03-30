@@ -2,6 +2,8 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <random>
+#include <vector>
+#include <algorithm>
 
 const int POINTS = 5;
 const float POINTSIZE = 10.0;
@@ -27,6 +29,10 @@ void main() {
 }
 )";
 
+std::vector<std::pair<float, float>> v;
+
+float sweep = 0.0;
+
 int main() {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -39,7 +45,7 @@ int main() {
     glViewport(0, 0, 800, 600);
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int x, int y) {glViewport(0, 0, x, y);});
 
-    // init shaders
+    // shaders
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vsh, NULL);
     glCompileShader(vertexShader);
@@ -51,21 +57,29 @@ int main() {
     glLinkProgram(sprogram); 
     glDeleteShader(vertexShader); glDeleteShader(fragShader); 
 
+    // misc configurations
     glPointSize(POINTSIZE);
 
     std::random_device rd; 
     std::mt19937 mt (rd()); 
-    std::uniform_real_distribution<float> dist(-1, 1);
+    std::uniform_real_distribution<float> dist(0.0, 1.0);
     float points[7 * POINTS];
+    v.reserve(POINTS); 
     for (int i = 0; i < POINTS; i ++) {
-        points[7 * i] = dist(mt);
-        points[7 * i + 1] = dist(mt);
+        float x = dist(mt), y = dist(mt);
+        v.push_back({x, y});
+        points[7 * i] = x;
+        points[7 * i + 1] = y;
         points[7 * i + 2] = 0.0;
-        points[7 * i + 3] = 0.0;
+        points[7 * i + 3] = 0.0; 
         points[7 * i + 4] = 0.0;
-        points[7 * i + 5] = 1.0;
+        points[7 * i + 5] = 1.0; 
         points[7 * i + 6] = 1.0;
-    }
+    } 
+    std::sort(v.begin(), v.end(), [](std::pair<float, float> a, std::pair<float, float> b) {
+        return a.second > b.second;
+    }); 
+    
     // vertex arrays
     unsigned int VAO;
     glGenVertexArrays(1, &VAO);
