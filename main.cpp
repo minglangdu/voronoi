@@ -54,7 +54,6 @@ float sweep = 1.0;
 class VAOH {
     public: 
         float* vertices;
-        unsigned int arr, buf; // array object, buffer object
         int sz, vamt;
         int shader, drawtype;
 
@@ -88,6 +87,12 @@ class VAOH {
             this->sz = sz;
             this->vamt = vamt;
         }
+        ~VAOH() {
+            delete vertices;
+            glDeleteBuffers(1, &buf);
+            glDeleteVertexArrays(1, &arr);
+        }
+
         void draw() {
             switch (shader) {
                 case 1:
@@ -105,6 +110,25 @@ class VAOH {
             glBindBuffer(GL_ARRAY_BUFFER, buf);
             glBufferSubData(GL_ARRAY_BUFFER, 0, sz, vertices);
         }
+    private:
+        unsigned int arr, buf; // array object, buffer object
+};
+
+class Arc : public VAOH {
+    float fx, fy;
+    float dir; // directrix
+    float b1, b2; // two boundary x coordinates arc does not extend past
+    Arc(float fx, float fy) : VAOH((([](float x, float y) {
+        return std::vector<float> ({x, y, 0.0, 0.0, 1.0, 0.0, 1.0});
+    })(fx, fy)).data(), 7 * sizeof(float), 1, GL_LINE_STRIP, GL_DYNAMIC_DRAW, 1) {
+        this->fx = fx; this->fy = fy;
+        this->b1 = fx; this->b2 = fx;
+        this->dir = fy;
+    }
+};
+
+class Edge : public VAOH {
+
 };
 
 int main() {
@@ -179,6 +203,7 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+    delete sites; delete sline;
     glfwTerminate();
     return 0;
 }
