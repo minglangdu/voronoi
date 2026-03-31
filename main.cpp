@@ -12,7 +12,10 @@
 
 const int POINTS = 10;
 const float POINTSIZE = 15.0;
-const int DELAY = 80;
+const float LINESIZE = 6.0;
+const int DELAY = 20;
+const int WIDTH = 700, HEIGHT = 700;
+const int PAR_STEP = 3; // pixels per part of parabola
 
 unsigned int sprogram1;
 
@@ -55,7 +58,7 @@ class VAOH {
     public: 
         float* vertices;
         int sz, vamt;
-        int shader, drawtype;
+        int shader, drawtype, managetype;
 
         VAOH(float vertices[], int sz, int vamt, int drawtype, int managetype, int shader=1) {
             /*
@@ -84,6 +87,7 @@ class VAOH {
             this->vertices = vertices;
             this->shader = shader;
             this->drawtype = drawtype;
+            this->managetype = managetype;
             this->sz = sz;
             this->vamt = vamt;
         }
@@ -108,27 +112,65 @@ class VAOH {
         void update() {
             // meant for updating VBO after manually changing vertices variable
             glBindBuffer(GL_ARRAY_BUFFER, buf);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, sz, vertices);
+            glBufferData(GL_ARRAY_BUFFER, sz, vertices, managetype);
         }
-    private:
+    protected:
         unsigned int arr, buf; // array object, buffer object
 };
 
 class Arc : public VAOH {
-    float fx, fy;
-    float dir; // directrix
-    float b1, b2; // two boundary x coordinates arc does not extend past
-    Arc(float fx, float fy) : VAOH((([](float x, float y) {
-        return std::vector<float> ({x, y, 0.0, 0.0, 1.0, 0.0, 1.0});
-    })(fx, fy)).data(), 7 * sizeof(float), 1, GL_LINE_STRIP, GL_DYNAMIC_DRAW, 1) {
-        this->fx = fx; this->fy = fy;
-        this->b1 = fx; this->b2 = fx;
-        this->dir = fy;
-    }
+    public: 
+        float fx, fy;
+        float dir; // directrix
+        float b1, b2; // two boundary x coordinates arc does not extend past
+
+        Arc(float fx, float fy) : VAOH((([](float x, float y) {
+            return std::vector<float> ({x, y, 0.0, 0.0, 0.4, 0.0, 1.0});
+        })(fx, fy)).data(), 7 * sizeof(float), 1, 
+        GL_LINES, 
+        GL_DYNAMIC_DRAW, 1) {
+            this->fx = fx; this->fy = fy;
+            this->b1 = fx; this->b2 = fx;
+            this->dir = fy;
+        }
+        
+        void update() {
+            if (dir >= fy) {
+                return;
+            }
+            std::vector<float> cur (0);
+            float p = (fy - dir) / 2;
+            // placeholder
+            b1 = -1.0; b2 = 1.0;
+            int camt = 0;
+            for (float x = b1; x <= b2; x += std::max((float)0.01, ((float)PAR_STEP / WIDTH))) { 
+                // (x - x0)^2 = 4py - 4py0
+                // y = 1/4p(x - x0)^2 + y0
+                float cy = ((((x - fx) * (x - fx)) / (4 * p)) + (fy - p));
+                if (cy > 1.0) {
+                    continue;
+                }
+                camt ++;
+                cur.push_back(x); cur.push_back(cy); cur.push_back(0.0);
+                cur.push_back(0.0); cur.push_back(0.4); cur.push_back(0.0); cur.push_back(1.0);
+            }
+            float nvbo[cur.size()];
+            std::copy(cur.begin(), cur.end(), nvbo);
+            this->vertices = nvbo;
+            this->vamt = camt;
+            this->sz = cur.size() * sizeof(float);
+            glBindBuffer(GL_ARRAY_BUFFER, buf);
+            glBufferData(GL_ARRAY_BUFFER, sz, vertices, managetype);
+        }
 };
 
-class Edge : public VAOH {
-
+class HalfEdge : public VAOH {
+    // two half-edges are created when a new site happens, facing in opposite directions
+    // directions are horizontal/vertical if they hit the screen's border
+    // or perpendicular to the line between the new arc's focus and the focus of the arc it intersects
+    // when two half edges meet, if they are parallel a new half edge is created from the intersection point with slope perpendicular to lines between focuses
+    // if they aren't parallel they close off a cell. typically at the same time a half edge is created with the other site the intersected half edge is between
+    
 };
 
 int main() {
@@ -136,12 +178,11 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(700, 700, "Voronoi", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Voronoi", NULL, NULL); 
     glfwMakeContextCurrent(window);
 
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-    int wi, he; glfwGetWindowSize(window, &wi, &he);
-    glViewport(0, 0, 2 * wi, 2 * he); // full width of window is actually twice the given height and width
+    glViewport(0, 0, 2 * WIDTH, 2 * HEIGHT); // full width of window is actually twice the given height and width
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int x, int y) {glViewport(0, 0, x, y);});
 
     // shaders
@@ -158,7 +199,7 @@ int main() {
 
     // misc configurations
     glPointSize(POINTSIZE);
-
+    glLineWidth(LINESIZE);
     
     std::random_device rd; 
     std::mt19937 mt (rd()); 
@@ -180,6 +221,8 @@ int main() {
     float lvert[7 * 2] = {-1.0, sweep, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, sweep, 0.0, 1.0, 0.0, 0.0, 1.0}; // red vertical line
     VAOH* sline = new VAOH(lvert, sizeof(lvert), 2, GL_LINES, GL_DYNAMIC_DRAW, 1);
 
+    std::vector<Arc*> arcs; arcs.reserve(POINTS);
+    std::vector<HalfEdge*> edges;
     int tick = 0; 
     while (!glfwWindowShouldClose(window)) {
 
@@ -189,7 +232,7 @@ int main() {
         sites->draw();
 
         sline->draw();
-        
+
         if (tick == 0 && !q.empty()) {
             auto cur = q.top(); q.pop();
             sweep = cur.first;
@@ -197,13 +240,30 @@ int main() {
             lvert[1] = sweep; lvert[8] = sweep;
             sline->vertices = lvert;
             sline->update();
+            if (cur.second.first == 0) {
+                // site
+                arcs.push_back(new Arc(cur.second.second, cur.first));
+            } else {
+                // intersection
+
+            }
         }
         tick ++; tick %= DELAY;
+
+        for (Arc* arc : arcs) {
+            arc->dir = sweep;
+            arc->update();
+            arc->draw();
+        }
+        for (HalfEdge* edge : edges) {
+            // placeholder
+            edge->update();
+            edge->draw();
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-    delete sites; delete sline;
     glfwTerminate();
     return 0;
 }
