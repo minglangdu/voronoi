@@ -24,6 +24,18 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(glfw)
 target_link_libraries(Voronoi PRIVATE glfw OpenGL::GL)
 
+# GLM
+
+FetchContent_Declare(
+  glm
+  GIT_REPOSITORY https://github.com/g-truc/glm.git
+  GIT_TAG 1.0.3 
+  GIT_SHALLOW ON
+)
+
+FetchContent_MakeAvailable(glm)
+target_link_libraries(Voronoi PRIVATE glm::glm)
+
 # GLAD
 
 target_include_directories(Voronoi PRIVATE external/GLAD/include)
