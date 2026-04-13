@@ -8,12 +8,13 @@
 #include <random>
 #include <vector>
 #include <algorithm>
-#include <queue>
+#include <set>
 
-const int POINTS = 10;
+const int POINTS = 4;
 const float POINTSIZE = 15.0;
-const float LINESIZE = 6.0;
-const int DELAY = 20;
+const float LINESIZE = 10.0;
+// const int DELAY = 20;
+const int DELAY = 300;
 const int WIDTH = 700, HEIGHT = 700;
 const int PAR_STEP = 3; // pixels per part of parabola
 
@@ -41,15 +42,17 @@ void main() {
 )";
 
 struct comp {
-    bool operator() (std::pair<float, std::pair<int, float>> a, std::pair<float, std::pair<int, float>> b) {
+    bool operator() (const std::pair<float, std::pair<int, float>>& a, const std::pair<float, std::pair<int, float>>& b) const {
         if (a.first == b.first) {
-            return a.second.first == 0;
+            // might have to change
+            return a.second.first > b.second.first;
         }
-        return a.first < b.first;
+        return a.first > b.first;
     }
 };
 
-std::priority_queue<std::pair<float, std::pair<int, float>>, std::vector<std::pair<float, std::pair<int, float>>>, comp> q; // {y coordinate, {type, x coordinate}}
+// set instead of priority queue in order to be able to invalidate obsolete intersection events
+std::set<std::pair<float, std::pair<int, float>>, comp> q; // {y coordinate, {type, x coordinate}}
 // type - 0 -> site event, 1 -> intersection event
 
 float sweep = 1.0;
@@ -118,34 +121,89 @@ class VAOH {
         unsigned int arr, buf; // array object, buffer object
 };
 
+class HalfEdge : public VAOH {
+    /*
+    two half-edges are created when a new site happens, facing in opposite directions
+    directions are horizontal/vertical if they hit the screen's border
+    or perpendicular to the line between the new arc's focus and the focus of the arc it intersects
+    when two half edges meet, a new half edge is created from the intersection point with slope perpendicular to lines between focuses
+    and the previous half edges are fixed in place. 
+
+    To check for edge intersection events, we look at every pair of edges that is adjacent when sorted by x coordinate of point furthest from starting position
+    When a new edge is placed between two previously adjacent edges, we remove the previous edge intersection event and add its intersections in. 
+
+    The speed of the edge is not stored because it is variable and very precise. Instead, only the slope will be used. Each edge intersection location
+    will be found and the one with the highest directrix will be chosen first. 
+
+    Each arc is assigned two edges where the current positions of the moving end of the edge define b1 and b2. This causes each arc to move and shrink accordingly. 
+    */
+    public: 
+        float sx, sy; // starting coordinates
+        float cx, cy; // current location
+        float dx, dy; // slope
+
+        HalfEdge(float sx, float sy, float dx, float dy) : VAOH((([](float x, float y) {
+                return std::vector<float> ({x, y, 0.0, 1.0, 0.0, 1.0, 1.0, x, y, 0.0, 1.0, 0.0, 1.0, 1.0});
+            })(sx, sy)).data(), 14 * sizeof(float), 2, 
+            GL_LINES, 
+            GL_DYNAMIC_DRAW, 1) {
+                this->sx = sx; this->sy = sy;
+                this->cx = sx; this->cy = sy;
+                this->dx = dx; this->dy = dy;
+        }
+        HalfEdge() : HalfEdge(0.0, 0.0, 1.0, 1.0) {}
+
+        void update() {
+            float narr[14] = {sx, sy, 0.0, 1.0, 0.0, 1.0, 1.0, cx, cy, 0.0, 1.0, 0.0, 1.0, 1.0};
+            this->vertices = narr;
+            VAOH::update();
+        }
+};
+
 class Arc : public VAOH {
     public: 
         float fx, fy;
         float dir; // directrix
         float b1, b2; // two boundary x coordinates arc does not extend past
 
-        Arc(float fx, float fy) : VAOH((([](float x, float y) {
-            return std::vector<float> ({x, y, 0.0, 0.0, 0.4, 0.0, 1.0});
+        // two boundary edges defining b1 and b2
+        // apparently if I define them on the same line there is a bug
+        HalfEdge* h1; 
+        HalfEdge* h2;
+
+        Arc(float fx, float fy, HalfEdge* e1, HalfEdge* e2) : VAOH((([](float x, float y) {
+            return std::vector<float> ({x, y, 0.0, 0.0, 0.4, 0.0, 1.0, x, 1.0, 0.0, 0.0, 0.4, 1.0});
         })(fx, fy)).data(), 7 * sizeof(float), 1, 
-        GL_LINES, 
+        GL_LINE_STRIP, 
         GL_DYNAMIC_DRAW, 1) {
             this->fx = fx; this->fy = fy;
             this->b1 = fx; this->b2 = fx;
             this->dir = fy;
+            this->h1 = e1;
+            this->h2 = e2;
         }
         
         void update() {
-            if (dir >= fy) {
+            if (dir == fy) {
+                // straight vertical line
+                float nvbo[] = {fx, fy, 0.0, 0.0, 0.4, 0.0, 1.0, fx, h1->sy, 0.0, 0.0, 0.4, 1.0}; // can use h2->sy too
+                this->vertices = nvbo;
+                this->vamt = 2; 
+                this->sz = sizeof(nvbo);
+                VAOH::update();
+                return;
+            }
+            if (dir > fy) {
                 return;
             }
             std::vector<float> cur (0);
             float p = (fy - dir) / 2;
-            // placeholder
-            b1 = -1.0; b2 = 1.0;
+
             int camt = 0;
+            // std::cout << "b1b2" << b1 << " " << b2 << "\n";
             for (float x = b1; x <= b2; x += std::max((float)0.01, ((float)PAR_STEP / WIDTH))) { 
                 // (x - x0)^2 = 4py - 4py0
-                // y = 1/4p(x - x0)^2 + y0
+                // y = 1/4p(x - x0)^2 + y0 (y0 = fy - p, x0 = fx)
                 float cy = ((((x - fx) * (x - fx)) / (4 * p)) + (fy - p));
                 if (cy > 1.0) {
                     continue;
@@ -159,18 +217,56 @@ class Arc : public VAOH {
             this->vertices = nvbo;
             this->vamt = camt;
             this->sz = cur.size() * sizeof(float);
-            glBindBuffer(GL_ARRAY_BUFFER, buf);
-            glBufferData(GL_ARRAY_BUFFER, sz, vertices, managetype);
+            VAOH::update();
         }
-};
 
-class HalfEdge : public VAOH {
-    // two half-edges are created when a new site happens, facing in opposite directions
-    // directions are horizontal/vertical if they hit the screen's border
-    // or perpendicular to the line between the new arc's focus and the focus of the arc it intersects
-    // when two half edges meet, if they are parallel a new half edge is created from the intersection point with slope perpendicular to lines between focuses
-    // if they aren't parallel they close off a cell. typically at the same time a half edge is created with the other site the intersected half edge is between
-    
+        std::pair<float, float> extend() {
+            // find new b1 and b2 given current dir
+            // b1 -> y = slope * (x - sx) + sy; 
+            // (x - x0)^2 = 4py - 4py0
+            // (1)(x^2) + (-2x0 - 4p*slope)(x) + (4py0 + 4p*slope*sx + x0^2 - 4p*sy) = 0
+            // x < sx1
+            // for b1, x = (-b - \sqrt{b^2 - 4c})/2
+            // for b2, x = (-b + \sqrt{b^2 - 4c})/2 (different values for b, c)
+            if (dir == fy) {
+                b1 = fx; b2 = fx;
+                h1->cx = fx; h1->cy = h1->sy + (h1->dy / h1->dx) * (b1 - h1->sx);
+                h2->cx = fx; h2->cy = h2->sy + (h2->dy / h2->dx) * (b2 - h2->sx);
+                return {b1, b2};
+            }
+            float p = (fy - dir) / 2;
+            float y0 = (fy - p);
+
+            float slope = h1->dy / h1->dx;
+            float b = -2 * fx - 4 * p * slope; 
+            float c = 4 * p * y0 + 4 * p * slope * h1->sx + fx * fx - 4 * p * h1->sy;
+            b1 = (-b - std::sqrt(b * b - 4 * c)) / 2.0;
+
+            slope = h2->dy / h2->dx;
+            c = 4 * p * y0 + 4 * p * slope * h2->sx + fx * fx - 4 * p * h2->sy;
+            b2 = (-b + std::sqrt(b * b - 4 * c)) / 2.0;
+
+            h1->cx = b1;
+            h1->cy = h1->sy + (h1->dy / h1->dx) * (b1 - h1->sx);
+
+            h2->cx = b2;
+            h2->cy = h2->sy + (h2->dy / h2->dx) * (b2 - h2->sx);
+            if (h1->dy != 0 || h2->dy != 0) 
+            std::cout << "extend (" << b1 << ", " << h1->cy << ") (" << b2 << ", " << h2->cy << ")\n";
+            return {b1, b2};
+        }
+
+        void draw() {
+            VAOH::draw();
+            this->h1->update();
+            this->h2->update();
+            this->h1->draw();
+            this->h2->draw();
+        }
+
+        bool operator<(const Arc* o) {
+            return b1 < o->b1;
+        }
 };
 
 int main() {
@@ -207,7 +303,7 @@ int main() {
     float points[7 * POINTS];
     for (int i = 0; i < POINTS; i ++) {
         float x = dist(mt), y = dist(mt);
-        q.push({y, {0, x}});
+        q.insert({y, {0, x}});
         points[7 * i] = x;
         points[7 * i + 1] = y;
         points[7 * i + 2] = 0.0;
@@ -222,7 +318,6 @@ int main() {
     VAOH* sline = new VAOH(lvert, sizeof(lvert), 2, GL_LINES, GL_DYNAMIC_DRAW, 1);
 
     std::vector<Arc*> arcs; arcs.reserve(POINTS);
-    std::vector<HalfEdge*> edges;
     int tick = 0; 
     while (!glfwWindowShouldClose(window)) {
 
@@ -234,15 +329,70 @@ int main() {
         sline->draw();
 
         if (tick == 0 && !q.empty()) {
-            auto cur = q.top(); q.pop();
+            auto cur = *q.begin(); q.erase(q.begin());
             sweep = cur.first;
+            // accurately show existing arc lengths
+            for (Arc* arc : arcs) {
+                std::cout << "extend arc\n";
+                arc->dir = sweep;
+                arc->extend();
+                arc->update();
+            }
+            sort(arcs.begin(), arcs.end()); // this sorting is suboptimal, we will use a tree afterwards
             // update VBO
             lvert[1] = sweep; lvert[8] = sweep;
             sline->vertices = lvert;
             sline->update();
             if (cur.second.first == 0) {
                 // site
-                arcs.push_back(new Arc(cur.second.second, cur.first));
+                Arc* above = NULL; // the arc it is above
+                Arc* na = new Arc(cur.second.second, cur.first, new HalfEdge(), new HalfEdge()); // placeholder edges
+                auto nxt = std::lower_bound(arcs.begin(), arcs.end(), na);
+
+                if (nxt != arcs.end()) std::cout << (*nxt)->b1 << " " << (*nxt)->b2 << " " << cur.second.second << "\n";
+
+                if ((nxt != arcs.end()) && (*nxt)->b1 <= cur.second.second && (*nxt)->b2 >= cur.second.second) {
+                    above = *nxt;
+                } else if (nxt != arcs.begin()) {
+                    nxt = prev(nxt);
+                    if ((*nxt)->b1 <= cur.second.second && (*nxt)->b2 >= cur.second.second) {
+                        above = *nxt;
+                    }
+                }
+                if (above != NULL) {
+                    float p = (above->fy - sweep) / 2;
+                    float cy = ((((cur.second.second - above->fx) * (cur.second.second - above->fx)) / (4 * p)) + (above->fy - p));
+                    float dx = above->fx - na->fx, dy = above->fy - na->fy;
+                    std::swap(dx, dy); dx *= -1; // make perpendicular 
+                    if (dx < 0) {
+                        dx *= -1; dy *= -1;
+                    }
+                    na->h1 = new HalfEdge(cur.second.second, cy, -dx, -dy);
+                    na->h2 = new HalfEdge(cur.second.second, cy, dx, dy);
+                    std::cout << cur.second.second << " " << cy << "\n";
+                    std::cout << "dxdy" << dx << " " << dy << "\n";
+                    // remove top arc and add two arcs that have new left and right half edges + old edges as borders
+                    Arc* larc = new Arc(above->fx, above->fy, above->h1, na->h1);
+                    Arc* rarc = new Arc(above->fx, above->fy, na->h2, above->h2);
+                    std::cout << "larc, rarc done\n";
+                    arcs.erase(remove(arcs.begin(), arcs.end(), above));
+                    std::cout << "removed above arc\n";
+                    arcs.push_back(larc); arcs.push_back(rarc);
+                } else {
+                    // two edges on top border
+                    na->h1 = new HalfEdge(cur.second.second, 1.0, -1.0, 0.0);
+                    na->h2 = new HalfEdge(cur.second.second, 1.0, 1.0, 0.0);
+                    std::cout << cur.second.second << " " << 1.0 << "\n";
+                }
+                // check if added edges will be placed between two edges and remove edges
+                if (true) {
+                    // TODO
+                }
+                // check if there is an edge to its left. 
+                
+                std::cout << "sorting\n";
+                arcs.push_back(na);
+                sort(arcs.begin(), arcs.end());
             } else {
                 // intersection
 
@@ -252,13 +402,9 @@ int main() {
 
         for (Arc* arc : arcs) {
             arc->dir = sweep;
+            arc->extend();
             arc->update();
             arc->draw();
-        }
-        for (HalfEdge* edge : edges) {
-            // placeholder
-            edge->update();
-            edge->draw();
         }
 
         glfwSwapBuffers(window);
