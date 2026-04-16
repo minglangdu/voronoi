@@ -14,7 +14,7 @@ const int POINTS = 4;
 const float POINTSIZE = 15.0;
 const float LINESIZE = 10.0;
 // const int DELAY = 20;
-const int DELAY = 300;
+const int DELAY = 150;
 const int WIDTH = 700, HEIGHT = 700;
 const int PAR_STEP = 3; // pixels per part of parabola
 
@@ -40,19 +40,30 @@ void main() {
     col = ccol;
 }
 )";
+struct Arc;
 
-struct comp {
-    bool operator() (const std::pair<float, std::pair<int, float>>& a, const std::pair<float, std::pair<int, float>>& b) const {
-        if (a.first == b.first) {
-            // might have to change
-            return a.second.first > b.second.first;
+struct Event {
+    float x, y;
+    int type; // 0 -> site; 1 -> circle (3) event; 2 -> two parabola intersection; 3 -> edge intersection
+    Arc* a1, *a2, *a3;
+
+    Event(float ax, float ay, int t, Arc* a1, Arc* a2, Arc* a3) {
+        this->x = ax; this->y = ay;
+        std::cout << ax << " " << ay << "\n";
+        this->type = t;
+        this->a1 = a1; this->a2 = a2; this->a3 = a3;
+    }
+
+    bool operator<(const Event& o) const {
+        if (y == o.y) {
+            return type > o.type;
         }
-        return a.first > b.first;
+        return y > o.y;
     }
 };
 
 // set instead of priority queue in order to be able to invalidate obsolete intersection events
-std::set<std::pair<float, std::pair<int, float>>, comp> q; // {y coordinate, {type, x coordinate}}
+std::set<Event> q; 
 // type - 0 -> site event, 1 -> intersection event
 
 float sweep = 1.0;
@@ -167,9 +178,7 @@ class Arc : public VAOH {
         float b1, b2; // two boundary x coordinates arc does not extend past
 
         // two boundary edges defining b1 and b2
-        // apparently if I define them on the same line there is a bug
-        HalfEdge* h1; 
-        HalfEdge* h2;
+        HalfEdge *h1, *h2; 
 
         Arc(float fx, float fy, HalfEdge* e1, HalfEdge* e2) : VAOH((([](float x, float y) {
             return std::vector<float> ({x, y, 0.0, 0.0, 0.4, 0.0, 1.0, x, 1.0, 0.0, 0.0, 0.4, 1.0});
@@ -303,7 +312,7 @@ int main() {
     float points[7 * POINTS];
     for (int i = 0; i < POINTS; i ++) {
         float x = dist(mt), y = dist(mt);
-        q.insert({y, {0, x}});
+        q.insert(Event(x, y, 0, NULL, NULL, NULL));
         points[7 * i] = x;
         points[7 * i + 1] = y;
         points[7 * i + 2] = 0.0;
@@ -330,46 +339,48 @@ int main() {
 
         if (tick == 0 && !q.empty()) {
             auto cur = *q.begin(); q.erase(q.begin());
-            sweep = cur.first;
-            // accurately show existing arc lengths
+            sweep = cur.y;
+            // TODO: use a red-black tree instead of an arc vector so that you only need to call extend() on log N sites not all of them 
             for (Arc* arc : arcs) {
                 std::cout << "extend arc\n";
                 arc->dir = sweep;
-                arc->extend();
+                arc->extend(); // not optimal
                 arc->update();
             }
-            sort(arcs.begin(), arcs.end()); // this sorting is suboptimal, we will use a tree afterwards
+            sort(arcs.begin(), arcs.end());
+
             // update VBO
             lvert[1] = sweep; lvert[8] = sweep;
             sline->vertices = lvert;
             sline->update();
-            if (cur.second.first == 0) {
+            if (cur.type == 0) {
                 // site
                 Arc* above = NULL; // the arc it is above
-                Arc* na = new Arc(cur.second.second, cur.first, new HalfEdge(), new HalfEdge()); // placeholder edges
+                Arc* na = new Arc(cur.x, cur.y, new HalfEdge(), new HalfEdge()); // placeholder edges
                 auto nxt = std::lower_bound(arcs.begin(), arcs.end(), na);
 
-                if (nxt != arcs.end()) std::cout << (*nxt)->b1 << " " << (*nxt)->b2 << " " << cur.second.second << "\n";
+                if (nxt != arcs.end()) std::cout << (*nxt)->b1 << " " << (*nxt)->b2 << " " << cur.x << "\n";
 
-                if ((nxt != arcs.end()) && (*nxt)->b1 <= cur.second.second && (*nxt)->b2 >= cur.second.second) {
+                if ((nxt != arcs.end()) && (*nxt)->b1 <= cur.x && (*nxt)->b2 >= cur.x) {
                     above = *nxt;
                 } else if (nxt != arcs.begin()) {
                     nxt = prev(nxt);
-                    if ((*nxt)->b1 <= cur.second.second && (*nxt)->b2 >= cur.second.second) {
+                    if ((*nxt)->b1 <= cur.x && (*nxt)->b2 >= cur.x) {
                         above = *nxt;
                     }
                 }
                 if (above != NULL) {
+                    // TODO: doesn't work if the line is vertical. 
                     float p = (above->fy - sweep) / 2;
-                    float cy = ((((cur.second.second - above->fx) * (cur.second.second - above->fx)) / (4 * p)) + (above->fy - p));
+                    float cy = ((((cur.x - above->fx) * (cur.x - above->fx)) / (4 * p)) + (above->fy - p));
                     float dx = above->fx - na->fx, dy = above->fy - na->fy;
                     std::swap(dx, dy); dx *= -1; // make perpendicular 
                     if (dx < 0) {
-                        dx *= -1; dy *= -1;
+                        // dx *= -1; dy *= -1;
                     }
-                    na->h1 = new HalfEdge(cur.second.second, cy, -dx, -dy);
-                    na->h2 = new HalfEdge(cur.second.second, cy, dx, dy);
-                    std::cout << cur.second.second << " " << cy << "\n";
+                    na->h1 = new HalfEdge(cur.x, cy, -dx, -dy);
+                    na->h2 = new HalfEdge(cur.x, cy, dx, dy);
+                    std::cout << cur.x << " " << cy << "\n";
                     std::cout << "dxdy" << dx << " " << dy << "\n";
                     // remove top arc and add two arcs that have new left and right half edges + old edges as borders
                     Arc* larc = new Arc(above->fx, above->fy, above->h1, na->h1);
@@ -380,19 +391,50 @@ int main() {
                     arcs.push_back(larc); arcs.push_back(rarc);
                 } else {
                     // two edges on top border
-                    na->h1 = new HalfEdge(cur.second.second, 1.0, -1.0, 0.0);
-                    na->h2 = new HalfEdge(cur.second.second, 1.0, 1.0, 0.0);
-                    std::cout << cur.second.second << " " << 1.0 << "\n";
+                    na->h1 = new HalfEdge(cur.x, 1.0, -1.0, 0.0);
+                    na->h2 = new HalfEdge(cur.x, 1.0, 1.0, 0.0);
+                    std::cout << cur.x << " " << 1.0 << "\n";
                 }
-                // check if added edges will be placed between two edges and remove edges
-                if (true) {
-                    // TODO
-                }
-                // check if there is an edge to its left. 
-                
                 std::cout << "sorting\n";
                 arcs.push_back(na);
                 sort(arcs.begin(), arcs.end());
+                auto npos = find(arcs.begin(), arcs.end(), na); // TODO: speed up with binary tree
+
+                // check if added edges will invalidate previous events
+
+                if (above != NULL && std::next(npos, -1) != arcs.begin() && std::next(npos, 2) != arcs.end()) { // potential undefined behavior
+                    // current position: {?L, larc, na, rarc, ?R}
+                    // checks if ?L and ?R exist
+                    // if they do, then the circle event that closes off `above` arc should be invalidated
+
+                } else if (above == NULL && npos != arcs.begin() && std::next(npos, 1) != arcs.end()) { // remove two site intersection event
+
+                } else if (false) { // left edge screen invalidation
+
+                } else if (false) { // right edge screen invalidation
+
+                }
+
+                // TODO: add new circle events and two site
+                if (arcs.size() >= 3 && above != NULL) {
+                    // two circle events: (site left of above, larc, na), (na, rarc, site right of above)
+                    if (std::next(npos, -1) != arcs.begin()) { // left circle
+
+                    } else if (npos != arcs.begin()) { // left two site
+
+                    }
+                    if (false) { // right circle
+
+                    } else if (false) { // right two site
+
+                    }
+                }
+                if (false) { // left edge screen
+
+                } 
+                if (false) { // right edge screen
+
+                }
             } else {
                 // intersection
 
